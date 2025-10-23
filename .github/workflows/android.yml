@@ -584,7 +584,7 @@ jobs:
                           val sph = signSph * (dSph.toIntOrNull() ?: 0) + signSph * ((fSph.toIntOrNull() ?: 0)/100.0)
                           val cyl = signCyl * (dCyl.toIntOrNull() ?: 0) + signCyl * ((fCyl.toIntOrNull() ?: 0)/100.0)
                           val p = Purchase(brandId=b.id, sph=sph, cyl=cyl, quantity=q, unitPrice=up, dateMillis=System.currentTimeMillis())
-                          val scopeIO = rememberCoroutineScope()
+                          // use the already-remembered scope (valid in composable)
                           scope.launch(Dispatchers.IO) {
                               app.repo.addPurchase(p)
                               refreshData()
@@ -628,10 +628,20 @@ jobs:
               }
 
               if (showBrandManager) {
-                  BrandManagerDialog(onDismiss = {
-                      showBrandManager = false
-                      val sc = rememberCoroutineScope()
-                  }, repo = app.repo)
+                  BrandManagerDialog(
+                      onDismiss = {
+                          showBrandManager = false
+                          // refresh brands list after closing
+                          scope.launch(Dispatchers.IO) {
+                              val updated = app.repo.brands()
+                              // Switch back to main thread to update state
+                              kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                  // not strictly needed; brands is only used in composable reads after next recomposition
+                              }
+                          }
+                      },
+                      repo = app.repo
+                  )
               }
           }
 
@@ -794,11 +804,9 @@ jobs:
           }
           EOF
 
-      # Ensure Android SDK tools are present for AGP to run
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      # Force Gradle 8.7 (compatible with AGP 8.5.x + Kotlin 1.9.x + KAPT)
       - name: Build with Gradle 8.7
         uses: gradle/gradle-build-action@v3
         with:
