@@ -1,39 +1,364 @@
-name: Hello Android App
+package com.example.lenstracker.ui.screens
 
-on:
-  workflow_dispatch:
+import android.app.Application
+import android.content.Context
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import com.example.lenstracker.data.*
+import com.example.lenstracker.repo.Repository
+import com.example.lenstracker.util.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import java.util.*
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
+class AppHolder(app: Application) {
+    val repo = Repository(AppDatabase.get(app).dao())
+}
+@Composable
+private fun rememberApp(ctx: Context): AppHolder {
+    val app = ctx.applicationContext as Application
+    return remember { AppHolder(app) }
+}
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+enum class Period { DAY, WEEK, MONTH, YEAR }
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 17
+@Composable
+fun MainScreen() {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val app = rememberApp(ctx)
+    val scope = rememberCoroutineScope()
 
-      - name: Create full LensTracker project (Room + PDF + Jalali + تومان)
-        run: |
-          mkdir -p app/src/main/java/com/example/lenstracker/data
-          mkdir -p app/src/main/java/com/example/lenstracker/repo
-          mkdir -p app/src/main/java/com/example/lenstracker/util
-          mkdir -p app/src/main/java/com/example/lenstracker/ui
-          mkdir -p app/src/main/java/com/example/lenstracker/ui/screens
-          mkdir -p app/src/main/res/xml
+    // auto clean 1y old entries
+    LaunchedEffect(Unit) {
+        val cutoff = System.currentTimeMillis() - 365L*24*60*60*1000
+        scope.launch(Dispatchers.IO) { app.repo.deleteOlderThan(cutoff) }
+    }
 
-          cat > settings.gradle <<'EOF'
-          rootProject.name = "LensTracker"
-          include(":app")
-          EOF
+    var showBrandManager by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf<String?>(null) }
 
-          cat > build.gradle <<'EOF'
-          buildscript {
-              repositories { google(); mavenCentral() }
+    // SPH / CYL parts (separate rows)
+    var signSph by remember { mutableStateOf("+") }
+    var dSph by remember { mutableStateOf("0") }
+    var fSph by remember { mutableStateOf("00") }
+
+    var signCyl by remember { mutableStateOf("+") }
+    var dCyl by remember { mutableStateOf("0") }
+    var fCyl by remember { mutableStateOf("00") }
+
+    var qty by remember { mutableStateOf("1") }
+
+    var brands by remember { mutableStateOf(listOf<Brand>()) }
+    var selectedBrand by remember { mutableStateOf<Brand?>(null) }
+
+    var period by remember { mutableStateOf(Period.DAY) }
+    var purchases by remember { mutableStateOf(listOf<Purchase>()) }
+    var total by remember { mutableStateOf(0.0) }
+
+    fun refreshData() {
+        scope.launch(Dispatchers.IO) {
+            val now = System.currentTimeMillis()
+            val from = when (period) {
+                Period.DAY -> startOfDayMillis(now)
+                Period.WEEK -> startOfWeekMillis(now)
+                Period.MONTH -> startOfJalaliMonthMillis(now)
+                Period.YEAR -> startOfJalaliYearMillis(now)
+            }
+            val to = when (period) {
+                Period.DAY -> endOfDayMillis(now)
+                Period.WEEK -> endOfWeekMillis(now)
+                Period.MONTH -> endOfJalaliMonthMillis(now)
+                Period.YEAR -> endOfJalaliYearMillis(now)
+            }
+            purchases = app.repo.purchasesBetween(from, to)
+            total = app.repo.sumBetween(from, to)
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        scope.launch(Dispatchers.IO) { brands = app.repo.brands() }
+        refreshData()
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("LensTracker") },
+                actions = {
+                    // Period selector kept at top for full visibility
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        PeriodChip("روز", period==Period.DAY)   { period=Period.DAY;   refreshData() }
+                        PeriodChip("هفته", period==Period.WEEK){ period=Period.WEEK;  refreshData() }
+                        PeriodChip("ماه", period==Period.MONTH){ period=Period.MONTH;  refreshData() }
+                        PeriodChip("سال", period==Period.YEAR) { period=Period.YEAR;  refreshData() }
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    TextButton(onClick = { showBrandManager = true }) { Text("Brands") }
+                }
+            )
+        }
+    ) { padding ->
+        Column(Modifier.padding(padding).padding(16.dp).fillMaxSize()) {
+
+            Text("Quick Entry", style = MaterialTheme.typography.h6)
+            Spacer(Modifier.height(10.dp))
+
+            // ---- SPH row (separate) ----
+            OpticRow(
+                sign = signSph, onSign = { signSph = it },
+                digit = dSph, onDigit = { dSph = it },
+                frac = fSph, onFrac = { fSph = it },
+                suffix = "sph"
+            )
+            Spacer(Modifier.height(8.dp))
+
+            // ---- CYL row (separate, under SPH) ----
+            OpticRow(
+                sign = signCyl, onSign = { signCyl = it },
+                digit = dCyl, onDigit = { dCyl = it },
+                frac = fCyl, onFrac = { fCyl = it },
+                suffix = "cyl"
+            )
+
+            Spacer(Modifier.height(12.dp))
+
+            // Brand + Qty (brand price is used automatically)
+            BrandQtyRow(
+                brands = brands,
+                selected = selectedBrand,
+                onSelect = {
+                    selectedBrand = it
+                },
+                qty = qty,
+                onQty = { qty = it }
+            )
+
+            // Show chosen brand name prominently
+            selectedBrand?.let { b ->
+                Spacer(Modifier.height(6.dp))
+                Text("برند انتخاب شده: ${b.name}  •  قیمت: ${toman(b.defaultPrice)}")
+            }
+
+            Spacer(Modifier.height(12.dp))
+            Button(onClick = {
+                val b = selectedBrand
+                val q = qty.toIntOrNull()
+                if (b==null || q==null || q<=0) {
+                    status = "لطفاً برند و تعداد معتبر وارد کنید."; return@Button
+                }
+                val sph = (if (signSph=="-") -1 else 1) *
+                        ((dSph.toIntOrNull() ?: 0) + ((fSph.toIntOrNull() ?: 0)/100.0))
+                val cyl = (if (signCyl=="-") -1 else 1) *
+                        ((dCyl.toIntOrNull() ?: 0) + ((fCyl.toIntOrNull() ?: 0)/100.0))
+
+                val p = Purchase(
+                    brandId=b.id, sph=sph, cyl=cyl,
+                    quantity=q, unitPrice=b.defaultPrice,
+                    dateMillis=System.currentTimeMillis()
+                )
+                scope.launch(Dispatchers.IO) {
+                    app.repo.addPurchase(p)
+                    refreshData()
+                }
+                status = "ذخیره شد."
+            }) { Text("Add Purchase") }
+
+            status?.let { Spacer(Modifier.height(8.dp)); Text(it, style = MaterialTheme.typography.body2) }
+
+            Spacer(Modifier.height(12.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("تاریخ: ${formatJalali(nowJalali())}")
+                Text("جمع کل: ${toman(total)}")
+            }
+
+            Spacer(Modifier.height(8.dp)); Divider(); Spacer(Modifier.height(8.dp))
+
+            LazyColumn(Modifier.weight(1f)) {
+                items(purchases) { p ->
+                    val bname = brands.find { it.id==p.brandId }?.name ?: "بدون برند"
+                    Row(Modifier.fillMaxWidth().padding(vertical=4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("SPH ${p.sph}  CYL ${p.cyl}  •  $bname x${p.quantity}")
+                        Text(toman(p.unitPrice * p.quantity))
+                    }
+                    Divider()
+                }
+            }
+        }
+    }
+
+    if (showBrandManager) {
+        BrandManagerDialog(onDismiss = { showBrandManager = false }, repo = app.repo)
+    }
+}
+
+@Composable
+private fun PeriodChip(text:String, selected:Boolean, onClick:()->Unit) {
+    Surface(
+        modifier = Modifier.clickable { onClick() },
+        color = if (selected) MaterialTheme.colors.primary.copy(alpha=0.15f) else MaterialTheme.colors.surface,
+        shape = MaterialTheme.shapes.small, elevation = 1.dp
+    ) {
+        Text(text, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp), fontSize = 12.sp)
+    }
+}
+
+/** Editable + selectable “combo box” text field */
+@Composable
+private fun ComboTextField(
+    value:String,
+    onValue:(String)->Unit,
+    options: List<String>,
+    label:String,
+    width: androidx.compose.ui.unit.Dp,
+    keyboardType: KeyboardType = KeyboardType.Number
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Column {
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValue,                  // typing allowed
+            modifier = Modifier.width(width).heightIn(min = 48.dp),
+            textStyle = TextStyle(fontSize = 14.sp),
+            label = if (label.isNotBlank()) ({ Text(label) }) else null,
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+            trailingIcon = { Text("▾", modifier = Modifier.clickable { expanded = !expanded }, fontSize = 12.sp) }
+        )
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            options.forEach { opt ->
+                DropdownMenuItem(onClick = { onValue(opt); expanded = false }) { Text(opt) }
+            }
+        }
+    }
+}
+
+/** One optic row: sign [+/−], digit [.], frac, and suffix (“sph” / “cyl”) */
+@Composable
+private fun OpticRow(
+    sign:String, onSign:(String)->Unit,
+    digit:String, onDigit:(String)->Unit,
+    frac:String, onFrac:(String)->Unit,
+    suffix:String
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        ComboTextField(value = sign, onValue = onSign, options = listOf("+","-"), label = "", width = 60.dp, keyboardType = KeyboardType.Text)
+        Spacer(Modifier.width(6.dp))
+        ComboTextField(value = digit, onValue = onDigit, options = (0..9).map{it.toString()}, label = "digit", width = 70.dp)
+        Spacer(Modifier.width(6.dp)); Text("."); Spacer(Modifier.width(6.dp))
+        ComboTextField(value = frac, onValue = onFrac, options = listOf("00","25","50","75"), label = "frac", width = 78.dp)
+        Spacer(Modifier.width(8.dp)); Text(suffix)
+    }
+}
+
+/** Brand + Qty row (brand price auto used) */
+@Composable
+private fun BrandQtyRow(
+    brands: List<Brand>,
+    selected: Brand?,
+    onSelect: (Brand?)->Unit,
+    qty:String, onQty:(String)->Unit
+) {
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Brand:", modifier = Modifier.width(50.dp))
+            var expanded by remember { mutableStateOf(false) }
+            Box {
+                OutlinedTextField(
+                    value = selected?.name ?: "",
+                    onValueChange = {},
+                    label = { Text("select") },
+                    modifier = Modifier.width(200.dp),
+                    readOnly = true,
+                    trailingIcon = { Text("▾", modifier = Modifier.clickable { expanded = true }) }
+                )
+                DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                    brands.forEach { b ->
+                        DropdownMenuItem(onClick = { onSelect(b); expanded = false }) {
+                            Text("${b.name}  (${toman(b.defaultPrice)})")
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.width(8.dp))
+            OutlinedTextField(
+                value = qty, onValueChange = onQty, label = { Text("Qty") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.width(90.dp)
+            )
+        }
+        selected?.let { b ->
+            val q = qty.toIntOrNull() ?: 0
+            Text("Total: ${toman(q * b.defaultPrice)}", modifier = Modifier.padding(top = 6.dp))
+        }
+    }
+}
+
+@Composable
+private fun BrandManagerDialog(onDismiss:()->Unit, repo: Repository) {
+    val scope = rememberCoroutineScope()
+    var list by remember { mutableStateOf(listOf<Brand>()) }
+    var name by remember { mutableStateOf("") }
+    var desc by remember { mutableStateOf("") }
+    var price by remember { mutableStateOf("") }
+
+    LaunchedEffect(Unit) { scope.launch(Dispatchers.IO) { list = repo.brands() } }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(shape = MaterialTheme.shapes.medium, elevation = 8.dp) {
+            Column(Modifier.padding(16.dp)) {
+                Text("Brands", style = MaterialTheme.typography.h6)
+                Spacer(Modifier.height(8.dp))
+                LazyColumn(modifier = Modifier.heightIn(max = 200.dp)) {
+                    items(list) { b ->
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Column {
+                                Text(b.name)
+                                if (b.description.isNotBlank()) Text(b.description, style = MaterialTheme.typography.body2)
+                            }
+                            Text(toman(b.defaultPrice))
+                        }
+                        Divider()
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                Text("Add / Edit", style = MaterialTheme.typography.subtitle1)
+                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Brand name") }, modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(6.dp))
+                OutlinedTextField(value = desc, onValueChange = { desc = it }, label = { Text("Description (optional)") }, modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(6.dp))
+                OutlinedTextField(value = price, onValueChange = { price = it }, label = { Text("Default price (تومان)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                    TextButton(onClick = onDismiss) { Text("Close") }
+                    Spacer(Modifier.width(8.dp))
+                    Button(onClick = {
+                        val p = price.toDoubleOrNull() ?: 0.0
+                        if (name.isNotBlank()) {
+                            scope.launch(Dispatchers.IO) {
+                                repo.addBrand(name.trim(), desc.trim(), p)
+                                list = repo.brands()
+                            }
+                            name=""; desc=""; price=""
+                        }
+                    }) { Text("Save") }
+                }
+            }
+        }
+    }
+}
               dependencies {
                   classpath "com.android.tools.build:gradle:8.5.2"
                   classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.24"
