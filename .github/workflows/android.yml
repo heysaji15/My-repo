@@ -66,6 +66,8 @@ jobs:
               implementation "androidx.activity:activity-compose:1.9.2"
               implementation "androidx.compose.ui:ui:1.7.4"
               implementation "androidx.compose.material:material:1.7.4"
+              implementation "androidx.compose.ui:ui-tooling-preview:1.7.4"
+              debugImplementation "androidx.compose.ui:ui-tooling:1.7.4"
           }
           EOF
           cat > app/src/main/AndroidManifest.xml <<'EOF'
@@ -82,19 +84,126 @@ jobs:
           EOF
           cat > app/src/main/java/com/example/lenstracker/MainActivity.kt <<'EOF'
           package com.example.lenstracker
+
           import android.os.Bundle
           import androidx.activity.ComponentActivity
           import androidx.activity.compose.setContent
+          import androidx.compose.foundation.layout.*
+          import androidx.compose.foundation.lazy.LazyColumn
+          import androidx.compose.foundation.lazy.items
           import androidx.compose.material.*
-          import androidx.compose.runtime.Composable
+          import androidx.compose.runtime.*
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.text.input.KeyboardOptions
+          import androidx.compose.ui.text.input.KeyboardType
+          import androidx.compose.ui.unit.dp
+
+          data class Purchase(val lens:String, val brand:String, val qty:Int, val price:Double) {
+              val total: Double get() = qty * price
+          }
+
           class MainActivity : ComponentActivity() {
               override fun onCreate(savedInstanceState: Bundle?) {
                   super.onCreate(savedInstanceState)
-                  setContent { Greeting() }
+                  setContent { LensTrackerScreen() }
               }
           }
+
           @Composable
-          fun Greeting() { Text("Hello from LensTracker!") }
+          fun LensTrackerScreen() {
+              var lens by remember { mutableStateOf("") }
+              var brand by remember { mutableStateOf("") }
+              var qty by remember { mutableStateOf("1") }
+              var price by remember { mutableStateOf("") }
+              val items = remember { mutableStateListOf<Purchase>() }
+              var status by remember { mutableStateOf<String?>(null) }
+
+              val total = items.sumOf { it.total }
+
+              Scaffold(
+                  topBar = { TopAppBar(title = { Text("LensTracker") }) }
+              ) { padding ->
+                  Column(
+                      modifier = Modifier
+                          .padding(padding)
+                          .padding(16.dp)
+                          .fillMaxSize()
+                  ) {
+                      Text("Quick Purchase Entry", style = MaterialTheme.typography.h6)
+                      Spacer(Modifier.height(12.dp))
+
+                      OutlinedTextField(
+                          value = lens, onValueChange = { lens = it },
+                          label = { Text("Lens (e.g., 0.25 sph 0.50 cyl)") },
+                          modifier = Modifier.fillMaxWidth()
+                      )
+                      Spacer(Modifier.height(8.dp))
+                      OutlinedTextField(
+                          value = brand, onValueChange = { brand = it },
+                          label = { Text("Brand") },
+                          modifier = Modifier.fillMaxWidth()
+                      )
+                      Spacer(Modifier.height(8.dp))
+                      OutlinedTextField(
+                          value = qty, onValueChange = { qty = it },
+                          label = { Text("Quantity") },
+                          keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                          modifier = Modifier.fillMaxWidth()
+                      )
+                      Spacer(Modifier.height(8.dp))
+                      OutlinedTextField(
+                          value = price, onValueChange = { price = it },
+                          label = { Text("Unit price") },
+                          keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                          modifier = Modifier.fillMaxWidth()
+                      )
+                      Spacer(Modifier.height(12.dp))
+                      Button(onClick = {
+                          val q = qty.toIntOrNull()
+                          val p = price.toDoubleOrNull()
+                          if (lens.isBlank() || brand.isBlank() || q == null || q <= 0 || p == null || p < 0) {
+                              status = "Please enter valid Lens, Brand, Quantity, and Price."
+                          } else {
+                              items += Purchase(lens.trim(), brand.trim(), q, p)
+                              qty = "1"; price = ""; status = "Added."
+                          }
+                      }) { Text("Add Purchase") }
+
+                      status?.let {
+                          Spacer(Modifier.height(8.dp))
+                          Text(it, style = MaterialTheme.typography.body2)
+                      }
+
+                      Spacer(Modifier.height(16.dp))
+                      Text("Entries:", style = MaterialTheme.typography.subtitle1)
+                      Spacer(Modifier.height(8.dp))
+
+                      LazyColumn(modifier = Modifier.weight(1f)) {
+                          items(items) { row ->
+                              Row(
+                                  modifier = Modifier
+                                      .fillMaxWidth()
+                                      .padding(vertical = 6.dp),
+                                  horizontalArrangement = Arrangement.SpaceBetween
+                              ) {
+                                  Text("${row.lens} • ${row.brand} x${row.qty}")
+                                  Text(String.format("$%.2f", row.total))
+                              }
+                              Divider()
+                          }
+                      }
+
+                      Spacer(Modifier.height(8.dp))
+                      Row(
+                          modifier = Modifier.fillMaxWidth(),
+                          horizontalArrangement = Arrangement.SpaceBetween
+                      ) {
+                          Text("Total", style = MaterialTheme.typography.h6)
+                          Text(String.format("$%.2f", total), style = MaterialTheme.typography.h6)
+                      }
+                  }
+              }
+          }
           EOF
 
       - name: Build with Gradle (no wrapper)
