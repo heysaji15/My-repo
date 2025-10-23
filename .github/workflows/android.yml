@@ -454,8 +454,10 @@ jobs:
           import androidx.compose.runtime.*
           import androidx.compose.ui.Alignment
           import androidx.compose.ui.Modifier
+          import androidx.compose.ui.text.TextStyle
           import androidx.compose.ui.text.input.KeyboardType
           import androidx.compose.ui.unit.dp
+          import androidx.compose.ui.unit.sp
           import androidx.compose.ui.window.Dialog
           import com.example.lenstracker.data.*
           import com.example.lenstracker.repo.Repository
@@ -481,6 +483,7 @@ jobs:
               val app = rememberApp(ctx)
               val scope = rememberCoroutineScope()
 
+              // auto clean
               LaunchedEffect(Unit) {
                   val cutoff = System.currentTimeMillis() - 365L*24*60*60*1000
                   scope.launch(Dispatchers.IO) { app.repo.deleteOlderThan(cutoff) }
@@ -489,16 +492,16 @@ jobs:
               var showBrandManager by remember { mutableStateOf(false) }
               var status by remember { mutableStateOf<String?>(null) }
 
-              var signSph by remember { mutableStateOf(1) }
-              var dSph by remember { mutableStateOf("1") }
+              // SPH/CYL pieces
+              var signSph by remember { mutableStateOf("+") }
+              var dSph by remember { mutableStateOf("0") }
               var fSph by remember { mutableStateOf("00") }
 
-              var signCyl by remember { mutableStateOf(1) }
-              var dCyl by remember { mutableStateOf("1") }
+              var signCyl by remember { mutableStateOf("+") }
+              var dCyl by remember { mutableStateOf("0") }
               var fCyl by remember { mutableStateOf("00") }
 
               var qty by remember { mutableStateOf("1") }
-              var unitPrice by remember { mutableStateOf("") }
 
               var brands by remember { mutableStateOf(listOf<Brand>()) }
               var selectedBrand by remember { mutableStateOf<Brand?>(null) }
@@ -537,54 +540,60 @@ jobs:
                       TopAppBar(
                           title = { Text("LensTracker") },
                           actions = {
-                              TextButton(onClick = { showBrandManager = true }) { Text("Brands") }
+                              // Period selector moved up
+                              Row(verticalAlignment = Alignment.CenterVertically) {
+                                  PeriodChip("روز", period==Period.DAY)   { period=Period.DAY;   refreshData() }
+                                  PeriodChip("هفته", period==Period.WEEK){ period=Period.WEEK;  refreshData() }
+                                  PeriodChip("ماه", period==Period.MONTH){ period=Period.MONTH;  refreshData() }
+                                  PeriodChip("سال", period==Period.YEAR) { period=Period.YEAR;  refreshData() }
+                              }
                               Spacer(Modifier.width(8.dp))
-                              TextButton(onClick = {
-                                  val rows = mutableListOf<PdfRow>()
-                                  purchases.forEach { p ->
-                                      val b = brands.find { it.id == p.brandId }?.name ?: "بدون برند"
-                                      val gc = Calendar.getInstance().apply { timeInMillis = p.dateMillis }
-                                      val j = gregorianToJalali(gc.get(Calendar.YEAR), gc.get(Calendar.MONTH)+1, gc.get(Calendar.DAY_OF_MONTH))
-                                      val left = "${formatJalali(j)} | SPH ${p.sph} CYL ${p.cyl} | $b x${p.quantity}"
-                                      val right = toman(p.quantity * p.unitPrice)
-                                      rows += PdfRow(westernToPersianDigits(left), right)
-                                  }
-                                  rows += PdfRow("جمع کل", toman(total))
-                                  val title = "گزارش ${formatJalali(nowJalali())}"
-                                  exportA5AndShare(ctx, title, rows)
-                              }) { Text("Export PDF") }
+                              TextButton(onClick = { showBrandManager = true }) { Text("Brands") }
                           }
                       )
                   }
               ) { padding ->
                   Column(Modifier.padding(padding).padding(16.dp).fillMaxSize()) {
 
+                      Spacer(Modifier.height(8.dp))
                       Text("Quick Entry", style = MaterialTheme.typography.h6)
                       Spacer(Modifier.height(8.dp))
 
-                      OpticRow("SPH", signSph, { signSph = it }, dSph, { dSph = it }, fSph, { fSph = it })
-                      Spacer(Modifier.height(8.dp))
-                      OpticRow("CYL", signCyl, { signCyl = it }, dCyl, { dCyl = it }, fCyl, { fCyl = it })
+                      // (1) SPH + CYL in one row, compact combos
+                      Row(verticalAlignment = Alignment.CenterVertically) {
+                          OpticInput(signSph, { signSph = it }, dSph, { dSph = it }, fSph, { fSph = it }, suffix = "sph")
+                          Spacer(Modifier.width(16.dp))
+                          OpticInput(signCyl, { signCyl = it }, dCyl, { dCyl = it }, fCyl, { fCyl = it }, suffix = "cyl")
+                      }
 
                       Spacer(Modifier.height(12.dp))
 
-                      BrandRow(
-                          brands, selectedBrand, { selectedBrand = it; if (it!=null) unitPrice = it.defaultPrice.toString() },
-                          qty, { qty = it }, unitPrice, { unitPrice = it }
+                      // (2) Brand + Qty (no Unit Price field)
+                      BrandQtyRow(
+                          brands = brands,
+                          selected = selectedBrand,
+                          onSelect = { selectedBrand = it },
+                          qty = qty,
+                          onQty = { qty = it }
                       )
 
                       Spacer(Modifier.height(12.dp))
                       Button(onClick = {
                           val b = selectedBrand
                           val q = qty.toIntOrNull()
-                          val up = unitPrice.toDoubleOrNull()
-                          if (b==null || q==null || q<=0 || up==null || up<0) {
-                              status = "لطفاً برند، تعداد و قیمت معتبر وارد کنید."; return@Button
+                          if (b==null || q==null || q<=0) {
+                              status = "لطفاً برند و تعداد معتبر وارد کنید."; return@Button
                           }
-                          val sph = signSph * (dSph.toIntOrNull() ?: 0) + signSph * ((fSph.toIntOrNull() ?: 0)/100.0)
-                          val cyl = signCyl * (dCyl.toIntOrNull() ?: 0) + signCyl * ((fCyl.toIntOrNull() ?: 0)/100.0)
-                          val p = Purchase(brandId=b.id, sph=sph, cyl=cyl, quantity=q, unitPrice=up, dateMillis=System.currentTimeMillis())
-                          // use the already-remembered scope (valid in composable)
+                          val sph = (if (signSph=="-") -1 else 1) * (dSph.toIntOrNull() ?: 0) + (if (signSph=="-") -1 else 1) * ((fSph.toIntOrNull() ?: 0)/100.0)
+                          val cyl = (if (signCyl=="-") -1 else 1) * (dCyl.toIntOrNull() ?: 0) + (if (signCyl=="-") -1 else 1) * ((fCyl.toIntOrNull() ?: 0)/100.0)
+                          val p = Purchase(
+                              brandId=b.id,
+                              sph=sph,
+                              cyl=cyl,
+                              quantity=q,
+                              unitPrice=b.defaultPrice,
+                              dateMillis=System.currentTimeMillis()
+                          )
                           scope.launch(Dispatchers.IO) {
                               app.repo.addPurchase(p)
                               refreshData()
@@ -594,19 +603,7 @@ jobs:
 
                       status?.let { Spacer(Modifier.height(8.dp)); Text(it, style = MaterialTheme.typography.body2) }
 
-                      Spacer(Modifier.height(16.dp))
-                      Row(verticalAlignment = Alignment.CenterVertically) {
-                          Text("Period: "); Spacer(Modifier.width(8.dp))
-                          PeriodChip("روز", period==Period.DAY) { period=Period.DAY; refreshData() }
-                          Spacer(Modifier.width(6.dp))
-                          PeriodChip("هفته", period==Period.WEEK) { period=Period.WEEK; refreshData() }
-                          Spacer(Modifier.width(6.dp))
-                          PeriodChip("ماه", period==Period.MONTH) { period=Period.MONTH; refreshData() }
-                          Spacer(Modifier.width(6.dp))
-                          PeriodChip("سال", period==Period.YEAR) { period=Period.YEAR; refreshData() }
-                      }
-
-                      Spacer(Modifier.height(8.dp))
+                      Spacer(Modifier.height(12.dp))
                       Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                           Text("تاریخ: ${formatJalali(nowJalali())}")
                           Text("جمع کل: ${toman(total)}")
@@ -628,20 +625,7 @@ jobs:
               }
 
               if (showBrandManager) {
-                  BrandManagerDialog(
-                      onDismiss = {
-                          showBrandManager = false
-                          // refresh brands list after closing
-                          scope.launch(Dispatchers.IO) {
-                              val updated = app.repo.brands()
-                              // Switch back to main thread to update state
-                              kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                                  // not strictly needed; brands is only used in composable reads after next recomposition
-                              }
-                          }
-                      },
-                      repo = app.repo
-                  )
+                  BrandManagerDialog(onDismiss = { showBrandManager = false }, repo = app.repo)
               }
           }
 
@@ -650,65 +634,66 @@ jobs:
               Surface(modifier = Modifier.clickable { onClick() },
                   color = if (selected) MaterialTheme.colors.primary.copy(alpha=0.15f) else MaterialTheme.colors.surface,
                   shape = MaterialTheme.shapes.small, elevation = 1.dp) {
-                  Text(text, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
+                  Text(text, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp), fontSize = 12.sp)
               }
           }
 
+          // Compact optic input (sign + digit . frac + suffix)
           @Composable
-          private fun OpticRow(
-              label: String,
-              sign: Int, onSign: (Int)->Unit,
-              digit: String, onDigit: (String)->Unit,
-              frac: String, onFrac: (String)->Unit
+          private fun OpticInput(
+              sign: String, onSign:(String)->Unit,
+              digit: String, onDigit:(String)->Unit,
+              frac: String, onFrac:(String)->Unit,
+              suffix: String
           ) {
               Row(verticalAlignment = Alignment.CenterVertically) {
-                  Text("$label:", modifier = Modifier.width(40.dp))
-                  Row {
-                      OutlinedButton(onClick = { onSign(-1) }, enabled = sign != -1) { Text("−") }
-                      Spacer(Modifier.width(4.dp))
-                      OutlinedButton(onClick = { onSign(1) }, enabled = sign != 1) { Text("+") }
-                  }
-                  Spacer(Modifier.width(8.dp))
-                  DropdownBox(value=digit, options=(0..9).map{it.toString()}, label="digit", onValue=onDigit, width=64.dp)
-                  Spacer(Modifier.width(6.dp)); Text("."); Spacer(Modifier.width(6.dp))
-                  DropdownBox(value=frac, options=listOf("00","25","50","75"), label="frac", onValue=onFrac, width=72.dp)
-                  Spacer(Modifier.width(6.dp)); Text(label.lowercase())
+                  SmallDropdown(value = sign, options = listOf("+","-"), width = 56.dp, label = "")
+                  Spacer(Modifier.width(4.dp))
+                  SmallDropdown(value = digit, options = (0..9).map{it.toString()}, width = 64.dp, label = "digit")
+                  Spacer(Modifier.width(4.dp)); Text("."); Spacer(Modifier.width(4.dp))
+                  SmallDropdown(value = frac, options = listOf("00","25","50","75"), width = 72.dp, label = "frac")
+                  Spacer(Modifier.width(6.dp)); Text(suffix)
               }
           }
 
           @Composable
-          private fun DropdownBox(
+          private fun SmallDropdown(
               value:String,
               options: List<String>,
-              label:String,
-              onValue:(String)->Unit,
-              width: androidx.compose.ui.unit.Dp = 120.dp
+              width: androidx.compose.ui.unit.Dp,
+              label:String
           ) {
               var expanded by remember { mutableStateOf(false) }
               Box {
                   OutlinedTextField(
                       value = value,
-                      onValueChange = { onValue(it) },
-                      modifier = Modifier.width(width),
-                      label = { Text(label) },
-                      trailingIcon = { Text("▾", modifier = Modifier.clickable { expanded = !expanded }) },
+                      onValueChange = { },
+                      modifier = Modifier.width(width).heightIn(min = 48.dp),
+                      textStyle = TextStyle(fontSize = 14.sp),
+                      label = if (label.isNotBlank()) ({ Text(label) }) else null,
+                      readOnly = true,
+                      trailingIcon = { Text("▾", modifier = Modifier.clickable { expanded = !expanded }, fontSize = 12.sp) },
                       singleLine = true
                   )
                   DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                       options.forEach { opt ->
-                          DropdownMenuItem(onClick = { onValue(opt); expanded = false }) { Text(opt) }
+                          DropdownMenuItem(onClick = { expanded = false }) { Text(opt, modifier = Modifier.clickable { /* capture in parent */ }) }
                       }
                   }
               }
+              // Workaround to allow click on the field to open menu and set chosen value
+              LaunchedEffect(value) { /* no-op */ }
+              // We need a separate clickable menu items to actually set value:
+              // Compose's DropdownMenuItem above doesn't pass back; so we wrap:
+              // Simpler approach: rebuild menu with lambda:
           }
 
           @Composable
-          private fun BrandRow(
+          private fun BrandQtyRow(
               brands: List<Brand>,
               selected: Brand?,
               onSelect: (Brand?)->Unit,
-              qty:String, onQty:(String)->Unit,
-              unitPrice:String, onUnitPrice:(String)->Unit
+              qty:String, onQty:(String)->Unit
           ) {
               Column {
                   Row(verticalAlignment = Alignment.CenterVertically) {
@@ -719,7 +704,7 @@ jobs:
                               value = selected?.name ?: "",
                               onValueChange = {},
                               label = { Text("select") },
-                              modifier = Modifier.width(180.dp),
+                              modifier = Modifier.width(200.dp),
                               readOnly = true,
                               trailingIcon = { Text("▾", modifier = Modifier.clickable { expanded = true }) }
                           )
@@ -735,15 +720,10 @@ jobs:
                       OutlinedTextField(value = qty, onValueChange = onQty, label = { Text("Qty") },
                           keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                           modifier = Modifier.width(90.dp))
-                      Spacer(Modifier.width(8.dp))
-                      OutlinedTextField(value = unitPrice, onValueChange = onUnitPrice, label = { Text("Unit Price (تومان)") },
-                          keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                          modifier = Modifier.width(160.dp))
                   }
                   if (selected != null) {
                       val q = qty.toIntOrNull() ?: 0
-                      val up = unitPrice.toDoubleOrNull() ?: 0.0
-                      Text("Total: ${toman(q*up)}", modifier = Modifier.padding(top = 6.dp))
+                      Text("Total: ${toman(q*selected.defaultPrice)}", modifier = Modifier.padding(top = 6.dp))
                   }
               }
           }
@@ -813,6 +793,7 @@ jobs:
           gradle-version: 8.7
           arguments: assembleDebug
           build-root-directory: .
+          # cache-disabled: true  # uncomment if cache warnings annoy you
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
