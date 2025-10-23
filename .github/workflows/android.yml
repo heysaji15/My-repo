@@ -51,7 +51,7 @@ jobs:
           plugins {
               id 'com.android.application'
               id 'org.jetbrains.kotlin.android'
-              id 'kotlin-kapt'      // Room annotation processor
+              id 'kotlin-kapt'
           }
 
           android {
@@ -114,7 +114,6 @@ jobs:
                 </intent-filter>
               </activity>
 
-              <!-- FileProvider to share PDF from cache -->
               <provider
                   android:name="androidx.core.content.FileProvider"
                   android:authorities="${applicationId}.fileprovider"
@@ -228,7 +227,6 @@ jobs:
               suspend fun addPurchase(p: Purchase) = dao.insertPurchase(p)
               suspend fun purchasesBetween(from: Long, to: Long) = dao.getPurchasesBetween(from, to)
               suspend fun sumBetween(from: Long, to: Long) = dao.sumBetween(from, to)
-
               suspend fun deleteOlderThan(cutoff: Long) = dao.deleteOlderThan(cutoff)
           }
           EOF
@@ -238,16 +236,16 @@ jobs:
           package com.example.lenstracker.util
           import java.util.*
 
-          // Gregorian -> Jalali conversion
           data class JDate(val jy:Int, val jm:Int, val jd:Int)
-          private val gMonthSum = intArrayOf(0,31,59,90,120,151,181,212,243,273,304,334)
+          private val gMonthCum = intArrayOf(0,31,59,90,120,151,181,212,243,273,304,334)
+          private fun isLeap(y:Int) = (y%4==0 && y%100!=0) || (y%400==0)
 
           fun gregorianToJalali(gYear:Int, gMonth:Int, gDay:Int): JDate {
               var gy = gYear
-              var gm = gMonth
+              val gm = gMonth
               val gd = gDay
               var gDayNo = 365*gy + (gy+3)/4 - (gy+99)/100 + (gy+399)/400
-              gDayNo += gMonthSum(gm-1) + gd
+              gDayNo += gMonthCum[gm-1] + gd
               if (gm>2 && isLeap(gy)) gDayNo += 1
               var jDayNo = gDayNo - 79
               val jNp = jDayNo / 12053
@@ -262,10 +260,11 @@ jobs:
               val jd = if (jDayNo < 186) 1 + (jDayNo%31) else 1 + ((jDayNo-186)%30)
               return JDate(jy, jm, jd)
           }
+
           fun jalaliToGregorian(jy:Int, jm:Int, jd:Int): Triple<Int,Int,Int> {
               val jy2 = jy - 979
-              var jDayNo = 365*jy2 + jy2/33*8 + (jy2%33 + 3)/4
-              jDayNo += if (jm<7) (jm-1)*31 else (6*31 + (jm-7)*30)
+              var jDayNo = 365*jy2 + (jy2/33)*8 + ((jy2%33 + 3)/4)
+              jDayNo += if (jm<7) (jm-1)*31 else 6*31 + (jm-7)*30
               jDayNo += jd - 1
               var gDayNo = jDayNo + 79
               var gy = 1600 + 400*(gDayNo/146097)
@@ -285,18 +284,14 @@ jobs:
                   gy += gDayNo/365
                   gDayNo %= 365
               }
-              var gm = 0
-              var gd = 0
               val gMonthLen = intArrayOf(31, if(leap)29 else 28,31,30,31,30,31,31,30,31,30,31)
+              var gm = 1; var gd = 0
               for (i in 0..11) {
-                  gm = i+1
                   val v = gMonthLen[i]
-                  if (gDayNo < v) { gd = gDayNo + 1; break } else gDayNo -= v
+                  if (gDayNo < v) { gm = i+1; gd = gDayNo + 1; break } else gDayNo -= v
               }
               return Triple(gy, gm, gd)
           }
-          private fun gMonthSum(m:Int) = gMonthSum[m]
-          private fun isLeap(y:Int) = (y%4==0 && y%100!=0) || (y%400==0)
 
           fun nowJalali(): JDate {
               val cal = Calendar.getInstance()
@@ -310,80 +305,59 @@ jobs:
 
           fun westernToPersianDigits(s:String): String {
               val map = mapOf('0' to '۰','1' to '۱','2' to '۲','3' to '۳','4' to '۴','5' to '۵','6' to '۶','7' to '۷','8' to '۸','9' to '۹')
-              return s.map { c -> map[c] ?: c }.joinToString("")
+              return s.map { map[it] ?: it }.joinToString("")
           }
 
           fun startOfDayMillis(ts: Long): Long {
-              val cal = Calendar.getInstance()
-              cal.timeInMillis = ts
-              cal.set(Calendar.HOUR_OF_DAY, 0)
-              cal.set(Calendar.MINUTE, 0)
-              cal.set(Calendar.SECOND, 0)
-              cal.set(Calendar.MILLISECOND, 0)
-              return cal.timeInMillis
+              val c = Calendar.getInstance(); c.timeInMillis = ts
+              c.set(Calendar.HOUR_OF_DAY,0); c.set(Calendar.MINUTE,0); c.set(Calendar.SECOND,0); c.set(Calendar.MILLISECOND,0)
+              return c.timeInMillis
           }
           fun endOfDayMillis(ts: Long): Long {
-              val cal = Calendar.getInstance()
-              cal.timeInMillis = ts
-              cal.set(Calendar.HOUR_OF_DAY, 23)
-              cal.set(Calendar.MINUTE, 59)
-              cal.set(Calendar.SECOND, 59)
-              cal.set(Calendar.MILLISECOND, 999)
-              return cal.timeInMillis
+              val c = Calendar.getInstance(); c.timeInMillis = ts
+              c.set(Calendar.HOUR_OF_DAY,23); c.set(Calendar.MINUTE,59); c.set(Calendar.SECOND,59); c.set(Calendar.MILLISECOND,999)
+              return c.timeInMillis
           }
-          // Week: Saturday-based
           fun startOfWeekMillis(ts: Long): Long {
-              val cal = Calendar.getInstance()
-              cal.timeInMillis = ts
-              cal.firstDayOfWeek = Calendar.SATURDAY
-              cal.set(Calendar.DAY_OF_WEEK, Calendar.SATURDAY)
-              return startOfDayMillis(cal.timeInMillis)
+              val c = Calendar.getInstance(); c.timeInMillis = ts; c.firstDayOfWeek = Calendar.SATURDAY
+              c.set(Calendar.DAY_OF_WEEK, Calendar.SATURDAY)
+              return startOfDayMillis(c.timeInMillis)
           }
           fun endOfWeekMillis(ts: Long): Long {
-              val cal = Calendar.getInstance()
-              cal.timeInMillis = startOfWeekMillis(ts)
-              cal.add(Calendar.DAY_OF_YEAR, 6)
-              return endOfDayMillis(cal.timeInMillis)
+              val c = Calendar.getInstance(); c.timeInMillis = startOfWeekMillis(ts); c.add(Calendar.DAY_OF_YEAR,6)
+              return endOfDayMillis(c.timeInMillis)
           }
-          // Month/Year by Jalali boundaries
           fun startOfJalaliMonthMillis(ts: Long): Long {
-              val cal = Calendar.getInstance()
-              cal.timeInMillis = ts
-              val j = gregorianToJalali(cal.get(Calendar.YEAR), cal.get(Calendar.MONTH)+1, cal.get(Calendar.DAY_OF_MONTH))
-              val g = jalaliToGregorian(j.jy, j.jm, 1)
-              val gc = Calendar.getInstance()
-              gc.set(g.first, g.second-1, g.third, 0, 0, 0)
-              gc.set(Calendar.MILLISECOND, 0)
+              val c = Calendar.getInstance(); c.timeInMillis = ts
+              val j = gregorianToJalali(c.get(Calendar.YEAR), c.get(Calendar.MONTH)+1, c.get(Calendar.DAY_OF_MONTH))
+              val g = jalaliToGregorian(j.jy,j.jm,1)
+              val gc = Calendar.getInstance(); gc.set(g.first, g.second-1, g.third,0,0,0); gc.set(Calendar.MILLISECOND,0)
               return gc.timeInMillis
           }
           fun endOfJalaliMonthMillis(ts: Long): Long {
-              val cal = Calendar.getInstance()
               val start = startOfJalaliMonthMillis(ts)
-              cal.timeInMillis = start
-              val j = gregorianToJalali(cal.get(Calendar.YEAR), cal.get(Calendar.MONTH)+1, cal.get(Calendar.DAY_OF_MONTH))
-              val nextMonth = if (j.jm==12) Pair(j.jy+1,1) else Pair(j.jy,j.jm+1)
-              val g = jalaliToGregorian(nextMonth.first, nextMonth.second, 1)
-              cal.set(g.first, g.second-1, g.third, 0,0,0)
-              cal.set(Calendar.MILLISECOND,0)
-              cal.add(Calendar.MILLISECOND,-1)
-              return cal.timeInMillis
+              val c = Calendar.getInstance(); c.timeInMillis = start
+              val j = gregorianToJalali(c.get(Calendar.YEAR), c.get(Calendar.MONTH)+1, c.get(Calendar.DAY_OF_MONTH))
+              val next = if (j.jm==12) Triple(j.jy+1,1,1) else Triple(j.jy,j.jm+1,1)
+              val g = jalaliToGregorian(next.first,next.second,next.third)
+              c.set(g.first, g.second-1, g.third,0,0,0); c.set(Calendar.MILLISECOND,0); c.add(Calendar.MILLISECOND,-1)
+              return c.timeInMillis
           }
           fun startOfJalaliYearMillis(ts: Long): Long {
-              val cal = Calendar.getInstance(); cal.timeInMillis = ts
-              val j = gregorianToJalali(cal.get(Calendar.YEAR), cal.get(Calendar.MONTH)+1, cal.get(Calendar.DAY_OF_MONTH))
+              val c = Calendar.getInstance(); c.timeInMillis = ts
+              val j = gregorianToJalali(c.get(Calendar.YEAR), c.get(Calendar.MONTH)+1, c.get(Calendar.DAY_OF_MONTH))
               val g = jalaliToGregorian(j.jy,1,1)
-              val gc = Calendar.getInstance(); gc.set(g.first, g.second-1, g.third, 0,0,0); gc.set(Calendar.MILLISECOND,0)
+              val gc = Calendar.getInstance(); gc.set(g.first,g.second-1,g.third,0,0,0); gc.set(Calendar.MILLISECOND,0)
               return gc.timeInMillis
           }
           fun endOfJalaliYearMillis(ts: Long): Long {
-              val cal = Calendar.getInstance()
+              val c = Calendar.getInstance()
               val start = startOfJalaliYearMillis(ts)
-              cal.timeInMillis = start
-              val j = gregorianToJalali(cal.get(Calendar.YEAR), cal.get(Calendar.MONTH)+1, cal.get(Calendar.DAY_OF_MONTH))
+              c.timeInMillis = start
+              val j = gregorianToJalali(c.get(Calendar.YEAR), c.get(Calendar.MONTH)+1, c.get(Calendar.DAY_OF_MONTH))
               val g = jalaliToGregorian(j.jy+1,1,1)
-              cal.set(g.first, g.second-1, g.third, 0,0,0); cal.set(Calendar.MILLISECOND,0)
-              cal.add(Calendar.MILLISECOND,-1)
-              return cal.timeInMillis
+              c.set(g.first,g.second-1,g.third,0,0,0); c.set(Calendar.MILLISECOND,0); c.add(Calendar.MILLISECOND,-1)
+              return c.timeInMillis
           }
           EOF
 
@@ -416,7 +390,6 @@ jobs:
               rows: List<PdfRow>,
               fileName: String = "lenstracker_export.pdf"
           ) {
-              // A5 ~ 420x595 points (72dpi)
               val doc = PdfDocument()
               val pageInfo = PdfDocument.PageInfo.Builder(420, 595, 1).create()
               val page = doc.startPage(pageInfo)
@@ -484,7 +457,6 @@ jobs:
           import androidx.compose.ui.text.input.KeyboardType
           import androidx.compose.ui.unit.dp
           import androidx.compose.ui.window.Dialog
-          import androidx.lifecycle.viewmodel.compose.viewModel
           import com.example.lenstracker.data.*
           import com.example.lenstracker.repo.Repository
           import com.example.lenstracker.util.*
@@ -492,7 +464,6 @@ jobs:
           import kotlinx.coroutines.launch
           import java.util.*
 
-          // ----- simple VM-like holder inside the file -----
           class AppHolder(app: Application) {
               val repo = Repository(AppDatabase.get(app).dao())
           }
@@ -510,7 +481,6 @@ jobs:
               val app = rememberApp(ctx)
               val scope = rememberCoroutineScope()
 
-              // auto cleanup (older than 1 year) on start
               LaunchedEffect(Unit) {
                   val cutoff = System.currentTimeMillis() - 365L*24*60*60*1000
                   scope.launch(Dispatchers.IO) { app.repo.deleteOlderThan(cutoff) }
@@ -519,7 +489,6 @@ jobs:
               var showBrandManager by remember { mutableStateOf(false) }
               var status by remember { mutableStateOf<String?>(null) }
 
-              // UI state
               var signSph by remember { mutableStateOf(1) }
               var dSph by remember { mutableStateOf("1") }
               var fSph by remember { mutableStateOf("00") }
@@ -531,11 +500,9 @@ jobs:
               var qty by remember { mutableStateOf("1") }
               var unitPrice by remember { mutableStateOf("") }
 
-              // brands
               var brands by remember { mutableStateOf(listOf<Brand>()) }
               var selectedBrand by remember { mutableStateOf<Brand?>(null) }
 
-              // list and totals
               var period by remember { mutableStateOf(Period.DAY) }
               var purchases by remember { mutableStateOf(listOf<Purchase>()) }
               var total by remember { mutableStateOf(0.0) }
@@ -555,10 +522,8 @@ jobs:
                           Period.MONTH -> endOfJalaliMonthMillis(now)
                           Period.YEAR -> endOfJalaliYearMillis(now)
                       }
-                      val list = app.repo.purchasesBetween(from, to)
-                      val sum = app.repo.sumBetween(from, to)
-                      purchases = list
-                      total = sum
+                      purchases = app.repo.purchasesBetween(from, to)
+                      total = app.repo.sumBetween(from, to)
                   }
               }
 
@@ -575,133 +540,86 @@ jobs:
                               TextButton(onClick = { showBrandManager = true }) { Text("Brands") }
                               Spacer(Modifier.width(8.dp))
                               TextButton(onClick = {
-                                  // build PDF rows for current period
-                                  val jToday = nowJalali()
-                                  val jTitle = "گزارش ${formatJalali(jToday)}"
                                   val rows = mutableListOf<PdfRow>()
                                   purchases.forEach { p ->
-                                      val brand = brands.find { it.id == p.brandId }?.name ?: "بدون برند"
-                                      val left = "${formatJalali(gregorianToJalali(Calendar.getInstance().apply { timeInMillis = p.dateMillis }.get(Calendar.YEAR), Calendar.getInstance().apply { timeInMillis = p.dateMillis }.get(Calendar.MONTH)+1, Calendar.getInstance().apply { timeInMillis = p.dateMillis }.get(Calendar.DAY_OF_MONTH)))} | SPH ${p.sph} CYL ${p.cyl} | $brand x${p.quantity}"
+                                      val b = brands.find { it.id == p.brandId }?.name ?: "بدون برند"
+                                      val gc = Calendar.getInstance().apply { timeInMillis = p.dateMillis }
+                                      val j = gregorianToJalali(gc.get(Calendar.YEAR), gc.get(Calendar.MONTH)+1, gc.get(Calendar.DAY_OF_MONTH))
+                                      val left = "${formatJalali(j)} | SPH ${p.sph} CYL ${p.cyl} | $b x${p.quantity}"
                                       val right = toman(p.quantity * p.unitPrice)
                                       rows += PdfRow(westernToPersianDigits(left), right)
                                   }
                                   rows += PdfRow("جمع کل", toman(total))
-                                  exportA5AndShare(ctx, jTitle, rows)
+                                  val title = "گزارش ${formatJalali(nowJalali())}"
+                                  exportA5AndShare(ctx, title, rows)
                               }) { Text("Export PDF") }
                           }
                       )
                   }
               ) { padding ->
-                  Column(
-                      modifier = Modifier
-                          .padding(padding)
-                          .padding(16.dp)
-                          .fillMaxSize()
-                  ) {
+                  Column(Modifier.padding(padding).padding(16.dp).fillMaxSize()) {
+
                       Text("Quick Entry", style = MaterialTheme.typography.h6)
                       Spacer(Modifier.height(8.dp))
 
-                      // --- SPH row
-                      OpticRow(
-                          label = "SPH",
-                          sign = signSph, onSign = { signSph = it },
-                          digit = dSph, onDigit = { dSph = it },
-                          frac = fSph, onFrac = { fSph = it }
-                      )
+                      OpticRow("SPH", signSph, { signSph = it }, dSph, { dSph = it }, fSph, { fSph = it })
                       Spacer(Modifier.height(8.dp))
-                      // --- CYL row
-                      OpticRow(
-                          label = "CYL",
-                          sign = signCyl, onSign = { signCyl = it },
-                          digit = dCyl, onDigit = { dCyl = it },
-                          frac = fCyl, onFrac = { fCyl = it }
-                      )
+                      OpticRow("CYL", signCyl, { signCyl = it }, dCyl, { dCyl = it }, fCyl, { fCyl = it })
 
                       Spacer(Modifier.height(12.dp))
 
-                      // brand + price + qty
                       BrandRow(
-                          brands = brands,
-                          selected = selectedBrand,
-                          onSelect = {
-                              selectedBrand = it
-                              if (it != null) unitPrice = it.defaultPrice.toString()
-                          },
-                          qty = qty, onQty = { qty = it },
-                          unitPrice = unitPrice, onUnitPrice = { unitPrice = it }
+                          brands, selectedBrand, { selectedBrand = it; if (it!=null) unitPrice = it.defaultPrice.toString() },
+                          qty, { qty = it }, unitPrice, { unitPrice = it }
                       )
 
                       Spacer(Modifier.height(12.dp))
                       Button(onClick = {
-                          val brand = selectedBrand
+                          val b = selectedBrand
                           val q = qty.toIntOrNull()
-                          val price = unitPrice.toDoubleOrNull()
-                          if (brand == null || q == null || q <= 0 || price == null || price < 0) {
-                              status = "لطفاً برند، تعداد و قیمت معتبر وارد کنید."
-                              return@Button
+                          val up = unitPrice.toDoubleOrNull()
+                          if (b==null || q==null || q<=0 || up==null || up<0) {
+                              status = "لطفاً برند، تعداد و قیمت معتبر وارد کنید."; return@Button
                           }
                           val sph = signSph * (dSph.toIntOrNull() ?: 0) + signSph * ((fSph.toIntOrNull() ?: 0)/100.0)
                           val cyl = signCyl * (dCyl.toIntOrNull() ?: 0) + signCyl * ((fCyl.toIntOrNull() ?: 0)/100.0)
-                          val p = Purchase(
-                              brandId = brand.id,
-                              sph = sph,
-                              cyl = cyl,
-                              quantity = q,
-                              unitPrice = price,
-                              dateMillis = System.currentTimeMillis()
-                          )
+                          val p = Purchase(brandId=b.id, sph=sph, cyl=cyl, quantity=q, unitPrice=up, dateMillis=System.currentTimeMillis())
+                          val scopeIO = rememberCoroutineScope()
                           scope.launch(Dispatchers.IO) {
                               app.repo.addPurchase(p)
-                              brands = app.repo.brands()
                               refreshData()
                           }
                           status = "ذخیره شد."
                       }) { Text("Add Purchase") }
 
-                      status?.let {
-                          Spacer(Modifier.height(8.dp))
-                          Text(it, style = MaterialTheme.typography.body2)
-                      }
+                      status?.let { Spacer(Modifier.height(8.dp)); Text(it, style = MaterialTheme.typography.body2) }
 
                       Spacer(Modifier.height(16.dp))
-
-                      // Period selector
                       Row(verticalAlignment = Alignment.CenterVertically) {
-                          Text("Period: ")
-                          Spacer(Modifier.width(8.dp))
-                          PeriodChip("روز", period==Period.DAY) { period = Period.DAY; refreshData() }
+                          Text("Period: "); Spacer(Modifier.width(8.dp))
+                          PeriodChip("روز", period==Period.DAY) { period=Period.DAY; refreshData() }
                           Spacer(Modifier.width(6.dp))
-                          PeriodChip("هفته", period==Period.WEEK) { period = Period.WEEK; refreshData() }
+                          PeriodChip("هفته", period==Period.WEEK) { period=Period.WEEK; refreshData() }
                           Spacer(Modifier.width(6.dp))
-                          PeriodChip("ماه", period==Period.MONTH) { period = Period.MONTH; refreshData() }
+                          PeriodChip("ماه", period==Period.MONTH) { period=Period.MONTH; refreshData() }
                           Spacer(Modifier.width(6.dp))
-                          PeriodChip("سال", period==Period.YEAR) { period = Period.YEAR; refreshData() }
+                          PeriodChip("سال", period==Period.YEAR) { period=Period.YEAR; refreshData() }
                       }
 
                       Spacer(Modifier.height(8.dp))
-                      Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                          val j = nowJalali()
-                          Text("تاریخ: ${formatJalali(j)}")
+                      Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                          Text("تاریخ: ${formatJalali(nowJalali())}")
                           Text("جمع کل: ${toman(total)}")
                       }
 
-                      Spacer(Modifier.height(8.dp))
-                      Divider()
-                      Spacer(Modifier.height(8.dp))
+                      Spacer(Modifier.height(8.dp)); Divider(); Spacer(Modifier.height(8.dp))
 
-                      LazyColumn(modifier = Modifier.weight(1f)) {
+                      LazyColumn(Modifier.weight(1f)) {
                           items(purchases) { p ->
-                              val brandName = brands.find { it.id == p.brandId }?.name ?: "بدون برند"
-                              Row(
-                                  modifier = Modifier
-                                      .fillMaxWidth()
-                                      .padding(vertical = 4.dp),
-                                  horizontalArrangement = Arrangement.SpaceBetween
-                              ) {
-                                  val left = "SPH ${p.sph}  CYL ${p.cyl}  •  $brandName x${p.quantity}"
-                                  val right = toman(p.unitPrice * p.quantity)
-                                  Text(left)
-                                  Text(right)
+                              val bname = brands.find { it.id==p.brandId }?.name ?: "بدون برند"
+                              Row(Modifier.fillMaxWidth().padding(vertical=4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                                  Text("SPH ${p.sph}  CYL ${p.cyl}  •  $bname x${p.quantity}")
+                                  Text(toman(p.unitPrice * p.quantity))
                               }
                               Divider()
                           }
@@ -710,25 +628,18 @@ jobs:
               }
 
               if (showBrandManager) {
-                  BrandManagerDialog(
-                      onDismiss = {
-                          showBrandManager = false
-                          // reload brands in case user changed
-                          scope.launch(Dispatchers.IO) { brands = app.repo.brands() }
-                      },
-                      repo = app.repo
-                  )
+                  BrandManagerDialog(onDismiss = {
+                      showBrandManager = false
+                      val sc = rememberCoroutineScope()
+                  }, repo = app.repo)
               }
           }
 
           @Composable
           private fun PeriodChip(text:String, selected:Boolean, onClick:()->Unit) {
-              Surface(
-                  modifier = Modifier.clickable { onClick() },
+              Surface(modifier = Modifier.clickable { onClick() },
                   color = if (selected) MaterialTheme.colors.primary.copy(alpha=0.15f) else MaterialTheme.colors.surface,
-                  shape = MaterialTheme.shapes.small,
-                  elevation = 1.dp
-              ) {
+                  shape = MaterialTheme.shapes.small, elevation = 1.dp) {
                   Text(text, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
               }
           }
@@ -742,33 +653,16 @@ jobs:
           ) {
               Row(verticalAlignment = Alignment.CenterVertically) {
                   Text("$label:", modifier = Modifier.width(40.dp))
-                  // sign
                   Row {
                       OutlinedButton(onClick = { onSign(-1) }, enabled = sign != -1) { Text("−") }
                       Spacer(Modifier.width(4.dp))
                       OutlinedButton(onClick = { onSign(1) }, enabled = sign != 1) { Text("+") }
                   }
                   Spacer(Modifier.width(8.dp))
-                  // first digit 1..9 (also allow 0)
-                  DropdownBox(
-                      value = digit,
-                      options = (0..9).map { it.toString() },
-                      label = "digit",
-                      onValue = onDigit,
-                      width = 64.dp
-                  )
-                  Spacer(Modifier.width(6.dp))
-                  Text(".")
-                  Spacer(Modifier.width(6.dp))
-                  DropdownBox(
-                      value = frac,
-                      options = listOf("00","25","50","75"),
-                      label = "frac",
-                      onValue = onFrac,
-                      width = 72.dp
-                  )
-                  Spacer(Modifier.width(6.dp))
-                  Text(label.lowercase())
+                  DropdownBox(value=digit, options=(0..9).map{it.toString()}, label="digit", onValue=onDigit, width=64.dp)
+                  Spacer(Modifier.width(6.dp)); Text("."); Spacer(Modifier.width(6.dp))
+                  DropdownBox(value=frac, options=listOf("00","25","50","75"), label="frac", onValue=onFrac, width=72.dp)
+                  Spacer(Modifier.width(6.dp)); Text(label.lowercase())
               }
           }
 
@@ -787,16 +681,12 @@ jobs:
                       onValueChange = { onValue(it) },
                       modifier = Modifier.width(width),
                       label = { Text(label) },
-                      trailingIcon = {
-                          Text("▾", modifier = Modifier.clickable { expanded = !expanded })
-                      },
+                      trailingIcon = { Text("▾", modifier = Modifier.clickable { expanded = !expanded }) },
                       singleLine = true
                   )
                   DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                       options.forEach { opt ->
-                          DropdownMenuItem(onClick = { onValue(opt); expanded = false }) {
-                              Text(opt)
-                          }
+                          DropdownMenuItem(onClick = { onValue(opt); expanded = false }) { Text(opt) }
                       }
                   }
               }
@@ -832,19 +722,13 @@ jobs:
                           }
                       }
                       Spacer(Modifier.width(8.dp))
-                      OutlinedTextField(
-                          value = qty, onValueChange = onQty,
-                          label = { Text("Qty") },
+                      OutlinedTextField(value = qty, onValueChange = onQty, label = { Text("Qty") },
                           keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                          modifier = Modifier.width(90.dp)
-                      )
+                          modifier = Modifier.width(90.dp))
                       Spacer(Modifier.width(8.dp))
-                      OutlinedTextField(
-                          value = unitPrice, onValueChange = onUnitPrice,
-                          label = { Text("Unit Price (تومان)") },
+                      OutlinedTextField(value = unitPrice, onValueChange = onUnitPrice, label = { Text("Unit Price (تومان)") },
                           keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                          modifier = Modifier.width(160.dp)
-                      )
+                          modifier = Modifier.width(160.dp))
                   }
                   if (selected != null) {
                       val q = qty.toIntOrNull() ?: 0
@@ -854,9 +738,8 @@ jobs:
               }
           }
 
-          // -------- Brand Manager ----------
           @Composable
-          private fun BrandManagerDialog(onDismiss:()->Unit, repo: com.example.lenstracker.repo.Repository) {
+          private fun BrandManagerDialog(onDismiss:()->Unit, repo: Repository) {
               val scope = rememberCoroutineScope()
               var list by remember { mutableStateOf(listOf<Brand>()) }
               var name by remember { mutableStateOf("") }
@@ -888,7 +771,8 @@ jobs:
                           Spacer(Modifier.height(6.dp))
                           OutlinedTextField(value = desc, onValueChange = { desc = it }, label = { Text("Description (optional)") }, modifier = Modifier.fillMaxWidth())
                           Spacer(Modifier.height(6.dp))
-                          OutlinedTextField(value = price, onValueChange = { price = it }, label = { Text("Default price (تومان)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+                          OutlinedTextField(value = price, onValueChange = { price = it }, label = { Text("Default price (تومان)") },
+                              keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
                           Spacer(Modifier.height(8.dp))
                           Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
                               TextButton(onClick = onDismiss) { Text("Close") }
@@ -910,11 +794,21 @@ jobs:
           }
           EOF
 
-      - name: Build (use Gradle without wrapper)
-        run: gradle assembleDebug
+      # Ensure Android SDK tools are present for AGP to run
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      # Force Gradle 8.7 (compatible with AGP 8.5.x + Kotlin 1.9.x + KAPT)
+      - name: Build with Gradle 8.7
+        uses: gradle/gradle-build-action@v3
+        with:
+          gradle-version: 8.7
+          arguments: assembleDebug
+          build-root-directory: .
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: app-debug
           path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
