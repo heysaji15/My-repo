@@ -462,7 +462,6 @@ jobs:
           import com.example.lenstracker.util.*
           import kotlinx.coroutines.Dispatchers
           import kotlinx.coroutines.launch
-          import java.util.*
 
           class AppHolder(app: Application) { val repo = Repository(AppDatabase.get(app).dao()) }
           @Composable private fun rememberApp(ctx: Context): AppHolder {
@@ -552,7 +551,7 @@ jobs:
                 Text("Quick Entry", style = MaterialTheme.typography.h6)
                 Spacer(Modifier.height(10.dp))
 
-                // SPH row
+                // SPH row (stacked, aligned)
                 OpticRow(
                   sign = signSph, onSign = { signSph = it },
                   digit = dSph, onDigit = { dSph = it },
@@ -561,7 +560,7 @@ jobs:
                 )
                 Spacer(Modifier.height(8.dp))
 
-                // CYL row (under SPH)
+                // CYL row (stacked, aligned with SPH)
                 OpticRow(
                   sign = signCyl, onSign = { signCyl = it },
                   digit = dCyl, onDigit = { dCyl = it },
@@ -646,22 +645,22 @@ jobs:
             }
           }
 
-          /** Editable + selectable “combo box” text field */
+          /** Editable + selectable “combo box” with weight-based width */
           @Composable
           private fun ComboTextField(
             value:String,
             onValue:(String)->Unit,
             options: List<String>,
             label:String,
-            width: androidx.compose.ui.unit.Dp,
+            modifier: Modifier = Modifier,
             keyboardType: KeyboardType = KeyboardType.Number
           ) {
             var expanded by remember { mutableStateOf(false) }
-            Column {
+            Column(modifier = modifier) {
               OutlinedTextField(
                 value = value,
                 onValueChange = onValue,
-                modifier = Modifier.width(width).heightIn(min = 48.dp),
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                 textStyle = TextStyle(fontSize = 14.sp),
                 label = if (label.isNotBlank()) ({ Text(label) }) else null,
                 singleLine = true,
@@ -676,7 +675,11 @@ jobs:
             }
           }
 
-          /** One optic row (separate line): sign + digit + . + frac + suffix */
+          /**
+           * One optic row: [ Sign | Digit | '.' | Fraction | suffix ]
+           * Uses weights so SPH and CYL rows align perfectly.
+           * Weights: Sign 1.5f (wider), Digit 1f, Fraction 1f, Dot is fixed narrow, Suffix wraps.
+           */
           @Composable
           private fun OpticRow(
             sign:String, onSign:(String)->Unit,
@@ -684,13 +687,26 @@ jobs:
             frac:String, onFrac:(String)->Unit,
             suffix:String
           ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-              ComboTextField(value = sign, onValue = onSign, options = listOf("+","-"), label = "", width = 60.dp, keyboardType = KeyboardType.Text)
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+              ComboTextField(
+                value = sign, onValue = onSign, options = listOf("+","-"),
+                label = "", keyboardType = KeyboardType.Text,
+                modifier = Modifier.weight(1.5f)
+              )
+              Spacer(Modifier.width(8.dp))
+              ComboTextField(
+                value = digit, onValue = onDigit, options = (0..9).map{it.toString()},
+                label = "digit", modifier = Modifier.weight(1f)
+              )
               Spacer(Modifier.width(6.dp))
-              ComboTextField(value = digit, onValue = onDigit, options = (0..9).map{it.toString()}, label = "digit", width = 70.dp)
-              Spacer(Modifier.width(6.dp)); Text("."); Spacer(Modifier.width(6.dp))
-              ComboTextField(value = frac, onValue = onFrac, options = listOf("00","25","50","75"), label = "frac", width = 78.dp)
-              Spacer(Modifier.width(8.dp)); Text(suffix)
+              Text(".", modifier = Modifier.width(10.dp))
+              Spacer(Modifier.width(6.dp))
+              ComboTextField(
+                value = frac, onValue = onFrac, options = listOf("00","25","50","75"),
+                label = "frac", modifier = Modifier.weight(1f)
+              )
+              Spacer(Modifier.width(8.dp))
+              Text(suffix)
             }
           }
 
